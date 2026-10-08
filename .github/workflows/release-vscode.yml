@@ -1,0 +1,202 @@
+# .github/workflows/release-vscode.yml
+# bk2
+# VSCodeの拡張機能をリリースするスクリプト
+# package.jsonのversionを元にリリースを作成
+# Release時に、そのversionと同名のMilestoneを新規作成
+# Release Notes:
+#   Milestone: [tag]
+#   Full Changelog: [previous tag...tag]
+
+name: Release VSCode Extension
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "package.json"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ===============================
+      # Checkout
+      # ===============================
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ===============================
+      # Setup Node.js
+      # ===============================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ===============================
+      # Install vsce
+      # ===============================
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      # ===============================
+      # Read version from package.json
+      # ===============================
+      - name: Read version from package.json
+        id: package
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      # ===============================
+      # Check VS Code package
+      # ===============================
+      - name: Check VS Code package
+        run: |
+          if ! jq -e '.engines.vscode' package.json > /dev/null; then
+            echo "Error: package.json does not contain engines.vscode."
+            exit 1
+          fi
+
+      # ===============================
+      # Check tag
+      # ===============================
+      - name: Check tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG does not exist."
+          fi
+
+      # ===============================
+      # Get previous tag
+      # ===============================
+      - name: Get previous tag
+        if: steps.tag.outputs.exists == 'false'
+        id: previous
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -n 1 || true)
+
+          echo "Previous tag: $PREVIOUS_TAG"
+          echo "tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+
+      # ===============================
+      # Create VSIX
+      # ===============================
+      - name: Create VSIX
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          vsce package
+
+      # ===============================
+      # Create tag
+      # ===============================
+      - name: Create tag
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+          REPO="${{ github.repository }}"
+
+          gh api \
+            "repos/$REPO/git/refs" \
+            -X POST \
+            -f "ref=refs/tags/$TAG" \
+            -f "sha=${{ github.sha }}"
+
+          echo "Tag $TAG created."
+
+      # ===============================
+      # Create Milestone
+      # ===============================
+      - name: Create Milestone
+        if: steps.tag.outputs.exists == 'false'
+        id: milestone
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+          REPO="${{ github.repository }}"
+
+          MILESTONE_NUMBER=$(gh api \
+            "repos/$REPO/milestones" \
+            -X POST \
+            -f "title=$TAG" \
+            --jq ".number")
+
+          MILESTONE_URL="https://github.com/$REPO/milestone/$MILESTONE_NUMBER"
+
+          echo "Milestone: $TAG"
+          echo "Milestone number: $MILESTONE_NUMBER"
+          echo "Milestone URL: $MILESTONE_URL"
+
+          echo "url=$MILESTONE_URL" >> "$GITHUB_OUTPUT"
+
+      # ===============================
+      # Create Release Notes
+      # ===============================
+      - name: Create Release Notes
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          MILESTONE_URL: ${{ steps.milestone.outputs.url }}
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+          PREVIOUS_TAG="${{ steps.previous.outputs.tag }}"
+          REPO="${{ github.repository }}"
+
+          echo "Milestone: [$TAG]($MILESTONE_URL)" > release-notes.md
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            COMPARE_URL="https://github.com/$REPO/compare/$PREVIOUS_TAG...$TAG"
+
+            echo "Full Changelog: [$PREVIOUS_TAG...$TAG]($COMPARE_URL)" >> release-notes.md
+          else
+            COMMITS_URL="https://github.com/$REPO/commits/$TAG"
+
+            echo "Full Changelog: [$TAG]($COMMITS_URL)" >> release-notes.md
+          fi
+
+          echo ""
+          echo "Release Notes:"
+          cat release-notes.md
+
+      # ===============================
+      # Create Release
+      # ===============================
+      - name: Create Release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.package.outputs.version }}"
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            *.vsix
