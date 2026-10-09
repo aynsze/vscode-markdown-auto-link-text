@@ -12,7 +12,7 @@ function activate(context) {
         ) {
             return;
         }
-        
+
         const editor = vscode.window.activeTextEditor;
 
         if (!editor) {
@@ -61,12 +61,6 @@ function checkLink(editor, lineNumber) {
             return;
         }
 
-        /*
-         * VS Code標準のMarkdown Definition Providerに、
-         * このリンクのリンク先を問い合わせる。
-         *
-         * slugを自分で解析したり、生成したりしない。
-         */
         const position = new vscode.Position(
             lineNumber,
             slugStart + 1
@@ -105,10 +99,6 @@ function checkLink(editor, lineNumber) {
             headingLineNumber
         ).text;
 
-        /*
-         * Definition Providerが返した見出し行から、
-         * Markdownの見出し本文だけを取得する。
-         */
         const headingMatch = headingLine.match(
             /^\s{0,3}#{1,6}\s+(.+?)\s*$/
         );
@@ -125,16 +115,6 @@ function checkLink(editor, lineNumber) {
             return;
         }
 
-        /*
-         * [] の部分だけを置き換える。
-         *
-         * 例:
-         * [](#取り除くtrim)
-         *
-         * ↓
-         *
-         * [取り除く（`trim`）](#取り除くtrim)
-         */
         const start = new vscode.Position(
             lineNumber,
             linkStart
