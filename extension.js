@@ -100,7 +100,7 @@ function checkLink(editor, lineNumber) {
         ).text;
 
         const headingMatch = headingLine.match(
-            /^\s{0,3}#{1,6}\s+(.+?)\s*$/
+            /^\s{0,3}(?:[-+*]\s+)?#{1,6}\s+(.+?)\s*$/
         );
 
         if (!headingMatch) {
